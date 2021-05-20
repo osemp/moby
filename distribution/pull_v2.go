@@ -2,6 +2,7 @@ package distribution // import "github.com/docker/docker/distribution"
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +66,30 @@ type v2Puller struct {
 	confirmedV2 bool
 }
 
+func (p *v2Puller) setMirrorHeaderForRequest(ctx context.Context) {
+	var (
+		domain     = ctx.Value("domain").(string)
+		authConfig = p.config.AuthConfig
+	)
+	if p.config.MetaHeaders == nil {
+		p.config.MetaHeaders = map[string][]string{}
+	}
+	// p.endpoint.URL.Scheme should be only http/https, so ignore the check.
+	p.config.MetaHeaders["domain"] = []string{domain}
+	authConfig.ServerAddress = domain
+	authJSON, err := json.Marshal(authConfig)
+	if err != nil {
+		logrus.Errorf("failed to marshal auth config for %s", authConfig.ServerAddress)
+		return
+	}
+
+	p.config.MetaHeaders["domain-auth"] = []string{base64.StdEncoding.EncodeToString(authJSON)}
+}
+
 func (p *v2Puller) Pull(ctx context.Context, ref reference.Named, platform *specs.Platform) (err error) {
+	if ctx.Value("domain") != nil {
+		p.setMirrorHeaderForRequest(ctx)
+	}
 	// TODO(tiborvass): was ReceiveTimeout
 	p.repo, p.confirmedV2, err = NewV2Repository(ctx, p.repoInfo, p.endpoint, p.config.MetaHeaders, p.config.AuthConfig, "pull")
 	if err != nil {

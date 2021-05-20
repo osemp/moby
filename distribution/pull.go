@@ -110,6 +110,9 @@ func Pull(ctx context.Context, ref reference.Named, imagePullConfig *ImagePullCo
 			continue
 		}
 
+		if endpoint.Mirror {
+			ctx = addOriginDomain(ctx, endpoints[len(endpoints)-1])
+		}
 		if err := puller.Pull(ctx, ref, imagePullConfig.Platform); err != nil {
 			// Was this pull cancelled? If so, don't try to fall
 			// back.
@@ -193,4 +196,8 @@ func addDigestReference(store refstore.Store, ref reference.Named, dgst digest.D
 	}
 
 	return store.AddDigest(dgstRef, id, true)
+}
+
+func addOriginDomain(ctx context.Context, originalEndpoint registry.APIEndpoint) context.Context {
+	return context.WithValue(ctx, "domain", originalEndpoint.URL.Scheme+"://"+originalEndpoint.URL.Host)
 }

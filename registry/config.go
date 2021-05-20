@@ -16,9 +16,10 @@ import (
 
 // ServiceOptions holds command line options.
 type ServiceOptions struct {
-	AllowNondistributableArtifacts []string `json:"allow-nondistributable-artifacts,omitempty"`
-	Mirrors                        []string `json:"registry-mirrors,omitempty"`
-	InsecureRegistries             []string `json:"insecure-registries,omitempty"`
+	AllowNondistributableArtifacts []string                  `json:"allow-nondistributable-artifacts,omitempty"`
+	Mirrors                        []string                  `json:"registry-mirrors,omitempty"`
+	InsecureRegistries             []string                  `json:"insecure-registries,omitempty"`
+	MirrorRegistries               []registrytypes.RegMirror `json:"mirror-registries,omitempty"`
 }
 
 // serviceConfig holds daemon configuration for the registry service.
@@ -68,6 +69,7 @@ func newServiceConfig(options ServiceOptions) (*serviceConfig, error) {
 		ServiceConfig: registrytypes.ServiceConfig{
 			InsecureRegistryCIDRs: make([]*registrytypes.NetIPNet, 0),
 			IndexConfigs:          make(map[string]*registrytypes.IndexInfo),
+			RegMirrors:            make(map[string]registrytypes.RegMirror),
 			// Hack: Bypass setting the mirrors to IndexConfigs since they are going away
 			// and Mirrors are only for the official registry anyways.
 		},
@@ -79,6 +81,9 @@ func newServiceConfig(options ServiceOptions) (*serviceConfig, error) {
 		return nil, err
 	}
 	if err := config.LoadInsecureRegistries(options.InsecureRegistries); err != nil {
+		return nil, err
+	}
+	if err := config.LoadMirrorRegistries(options.MirrorRegistries); err != nil {
 		return nil, err
 	}
 
@@ -147,6 +152,37 @@ func (config *serviceConfig) LoadMirrors(mirrors []string) error {
 		Mirrors:  config.Mirrors,
 		Secure:   true,
 		Official: true,
+	}
+
+	return nil
+}
+
+// LoadMirrorRegistries loads mirrors to config, after removing duplicates.
+// Returns an error if mirrors contains an invalid mirror.
+func (config *serviceConfig) LoadMirrorRegistries(regMirrors []registrytypes.RegMirror) error {
+	urlVisit := make(map[string]bool)
+
+	for _, regMirror := range regMirrors {
+		config.RegMirrors[regMirror.Domain.Host] = regMirror
+	}
+
+	for _, regMirror := range config.RegMirrors {
+		for _, mirror := range regMirror.Mirrors {
+			if mirror.Hostname() == "docker.io" {
+				return fmt.Errorf("failed to assign docker.io to be a mirror")
+			}
+			if _, err := ValidateMirror(mirror.String()); err != nil {
+				return err
+			}
+			urlVisit[mirror.Host] = true
+		}
+	}
+
+	for _, regMirror := range config.RegMirrors {
+		if urlVisit[regMirror.Domain.Host] {
+			return fmt.Errorf("registry domain %s cannot be a mirror in the meantime, or domain cannot be set for domain with multiple times", regMirror.Domain.Host)
+		}
+		urlVisit[regMirror.Domain.Host] = true
 	}
 
 	return nil

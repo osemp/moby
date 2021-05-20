@@ -33,6 +33,7 @@ type Service interface {
 	TLSConfig(hostname string) (*tls.Config, error)
 	LoadAllowNondistributableArtifacts([]string) error
 	LoadMirrors([]string) error
+	LoadMirrorRegistries(regMirrors []registrytypes.RegMirror) error
 	LoadInsecureRegistries([]string) error
 }
 
@@ -62,6 +63,7 @@ func (s *DefaultService) ServiceConfig() *registrytypes.ServiceConfig {
 		InsecureRegistryCIDRs:                   make([]*(registrytypes.NetIPNet), 0),
 		IndexConfigs:                            make(map[string]*(registrytypes.IndexInfo)),
 		Mirrors:                                 make([]string, 0),
+		RegMirrors:                              make(map[string]registrytypes.RegMirror),
 	}
 
 	// construct a new ServiceConfig which will not retrieve s.Config directly,
@@ -75,6 +77,7 @@ func (s *DefaultService) ServiceConfig() *registrytypes.ServiceConfig {
 	}
 
 	servConfig.Mirrors = append(servConfig.Mirrors, s.config.ServiceConfig.Mirrors...)
+	servConfig.RegMirrors = s.config.ServiceConfig.RegMirrors
 
 	return &servConfig
 }
@@ -93,6 +96,13 @@ func (s *DefaultService) LoadMirrors(mirrors []string) error {
 	defer s.mu.Unlock()
 
 	return s.config.LoadMirrors(mirrors)
+}
+
+func (s *DefaultService) LoadMirrorRegistries(regMirrors []registrytypes.RegMirror) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.config.LoadMirrorRegistries(regMirrors)
 }
 
 // LoadInsecureRegistries loads insecure registries for Service
@@ -310,4 +320,18 @@ func (s *DefaultService) LookupPushEndpoints(hostname string) (endpoints []APIEn
 
 func (s *DefaultService) lookupEndpoints(hostname string) (endpoints []APIEndpoint, err error) {
 	return s.lookupV2Endpoints(hostname)
+}
+
+func (s *DefaultService) lookupMirrorRegistry(host string) *registrytypes.RegMirror {
+	var res *registrytypes.RegMirror
+	if reg, ok := s.config.RegMirrors[host]; ok {
+		res = &reg
+	}
+	// if option * exists, then all pull request will go to its mirror
+	for regHost, reg := range s.config.RegMirrors {
+		if regHost == "*" {
+			return &reg
+		}
+	}
+	return res
 }

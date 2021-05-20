@@ -745,6 +745,123 @@ func TestPushImageJSONIndex(t *testing.T) {
 	}
 }
 
+func TestMirrorEndpointLookupV2(t *testing.T) {
+	//skip.If(t, os.Getuid() != 0, "skipping test that requires root")
+	var (
+		err                                error
+		mirrorRegA, mirrorRegB, mirrorRegC registrytypes.RegMirror
+		config                             *serviceConfig
+	)
+
+	mirrorMap := make(map[string][]string)
+	mirrorMap["docker.io"] = []string{"https://mirror1.com", "https://mirror2.com"}
+	mirrorMap["myregistry.io"] = []string{"https://mirror3.com", "https://mirror4.com"}
+	mirrorMap["*"] = []string{"http://mirror5.com"}
+
+	mirrorRegA, err = registrytypes.NewRegistryMirror("https://docker.io", mirrorMap["docker.io"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegB, err = registrytypes.NewRegistryMirror("https://myregistry.io", mirrorMap["myregistry.io"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegC, err = registrytypes.NewRegistryMirror("*", mirrorMap["*"])
+
+	containsMirror := func(endpoints []APIEndpoint, mirrorEndpoints []string) bool {
+		m := make(map[string]bool)
+		for _, me := range mirrorEndpoints {
+			u, err := url.Parse(me)
+			if err != nil {
+				continue
+			}
+			m[u.Host] = true
+		}
+
+		for _, pe := range endpoints {
+			if m[pe.URL.Host] {
+				return true
+			}
+		}
+		return false
+	}
+
+	config, err = newServiceConfig(ServiceOptions{
+		MirrorRegistries: []registrytypes.RegMirror{mirrorRegA, mirrorRegB},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dService := DefaultService{config: config}
+	imageName, err := reference.WithName(IndexName + "/test/image")
+	if err != nil {
+		t.Error(err)
+	}
+	pushAPIEndpoints, err := dService.LookupPushEndpoints(reference.Domain(imageName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsMirror(pushAPIEndpoints, mirrorMap[IndexName]) {
+		t.Fatal("Push endpoint should not contain mirror")
+	}
+	if len(pushAPIEndpoints) == 0 {
+		t.Fatal("push the number of apiEndPoints is 0, it should not be 0")
+	}
+	if pushAPIEndpoints[0].URL.Host != DefaultV2Registry.Host {
+		t.Fatal("push url host should be " + DefaultV2Registry.Host)
+	}
+
+	pullAPIEndpoints, err := dService.LookupPullEndpoints(reference.Domain(imageName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsMirror(pullAPIEndpoints, mirrorMap[IndexName]) {
+		t.Fatal("Pull endpoint should contain mirror")
+	}
+	if len(pullAPIEndpoints) == 0 || pullAPIEndpoints[len(pullAPIEndpoints)-1].URL.Host != DefaultV2Registry.Host {
+		t.Fatalf("pull endpoint does not look correct, len: %d, last one host is: %s", len(pullAPIEndpoints), pullAPIEndpoints[len(pullAPIEndpoints)-1].URL.Host)
+	}
+
+	config, err = newServiceConfig(ServiceOptions{
+		MirrorRegistries:   []registrytypes.RegMirror{mirrorRegA, mirrorRegB, mirrorRegC},
+		InsecureRegistries: []string{"mirror5.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dService = DefaultService{config: config}
+	pullAPIEndpoints, err = dService.LookupPullEndpoints(reference.Domain(imageName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pullAPIEndpoints) > 0 {
+		assert.Assert(t, pullAPIEndpoints[0].URL.String() == "http://mirror5.com")
+	}
+
+	imageName, err = reference.WithName("mirror5.com/test/image")
+	if err != nil {
+		t.Error(err)
+	}
+	pullAPIEndpoints, err = dService.LookupPullEndpoints(reference.Domain(imageName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pullAPIEndpoints) != 2 {
+		t.Fatal("len for pullAPIEndpoints should be 2")
+	}
+	if pullAPIEndpoints[0].URL.Host != "mirror5.com" || pullAPIEndpoints[1].URL.Host != "mirror5.com" {
+		t.Fatalf("%s %s should be mirror5.com both", pullAPIEndpoints[0].URL.Host, pullAPIEndpoints[1].URL.Host)
+	}
+	if pullAPIEndpoints[0].URL.Scheme != "https" {
+		t.Fatalf("wrong scheme %s", pullAPIEndpoints[0].URL.Scheme)
+	}
+	if pullAPIEndpoints[1].URL.Scheme != "http" {
+		t.Fatalf("wrong scheme %s", pullAPIEndpoints[1].URL.Scheme)
+	}
+}
+
 func TestSearchRepositories(t *testing.T) {
 	r := spawnTestRegistrySession(t)
 	results, err := r.SearchRepositories("fakequery", 25)
@@ -908,6 +1025,56 @@ func TestIsSecureIndex(t *testing.T) {
 			t.Errorf("isSecureIndex failed for %q %v, expected %v got %v", tt.addr, tt.insecureRegistries, tt.expected, sec)
 		}
 	}
+}
+
+func TestLookupMirrorRegistry(t *testing.T) {
+	var (
+		err error
+	)
+
+	mirrorRegA, err := registrytypes.NewRegistryMirror("https://registry.test1.com", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegB, err := registrytypes.NewRegistryMirror("http://registry.test2.com", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegC, err := registrytypes.NewRegistryMirror("http://registry.test3.com:5000", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegD, err := registrytypes.NewRegistryMirror("registry.test4.com", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := newServiceConfig(
+		ServiceOptions{
+			MirrorRegistries: []registrytypes.RegMirror{mirrorRegA, mirrorRegB, mirrorRegC, mirrorRegD},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dService := &DefaultService{
+		config: config,
+	}
+	reg := dService.lookupMirrorRegistry("registry.test1.com")
+	assert.Assert(t, reg != nil)
+	assert.Equal(t, reg.Domain.String(), "https://registry.test1.com")
+	reg = dService.lookupMirrorRegistry("registry.test2.com")
+	assert.Assert(t, reg != nil)
+	assert.Equal(t, reg.Domain.String(), "http://registry.test2.com")
+	reg = dService.lookupMirrorRegistry("registry.test3.com")
+	assert.Assert(t, reg == nil)
+	reg = dService.lookupMirrorRegistry("registry.test3.com:5000")
+	assert.Assert(t, reg != nil)
+	assert.Equal(t, reg.Domain.String(), "http://registry.test3.com:5000")
+	reg = dService.lookupMirrorRegistry("registry.test4.com")
+	assert.Assert(t, reg != nil)
+	assert.Equal(t, reg.Domain.String(), "https://registry.test4.com")
 }
 
 type debugTransport struct {

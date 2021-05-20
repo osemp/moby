@@ -1,6 +1,7 @@
 package daemon // import "github.com/docker/docker/daemon"
 
 import (
+	registrytypes "github.com/docker/docker/api/types/registry"
 	"os"
 	"reflect"
 	"sort"
@@ -195,6 +196,119 @@ func TestDaemonReloadMirrors(t *testing.T) {
 			for _, address := range value.after {
 				if _, exist := dataMap[address]; !exist {
 					t.Fatalf("Expected %s in daemon mirrors, while get none", address)
+				}
+			}
+		}
+	}
+}
+
+func TestDaemonReloadMirrorRegistries(t *testing.T) {
+	daemon := &Daemon{
+		imageService: images.NewImageService(images.ImageServiceConfig{}),
+	}
+	muteLogs()
+
+	var (
+		err                                               error
+		mirrorRegistryA, mirrorRegistryB, mirrorRegistryC registrytypes.RegMirror
+	)
+
+	mirrorRegistryA, err = registrytypes.NewRegistryMirror("https://registry.test1.com", []string{"https://mirror.test1.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegistryB, err = registrytypes.NewRegistryMirror("https://registry.test2.com:5000", []string{"https://mirror.test2.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorRegistryC, err = registrytypes.NewRegistryMirror("http://registry.test3.com", []string{"http://mirror.test3.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon.RegistryService, err = registry.NewService(registry.ServiceOptions{
+		MirrorRegistries: []registrytypes.RegMirror{
+			mirrorRegistryA, mirrorRegistryB, mirrorRegistryC,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon.configStore = &config.Config{}
+
+	type pair struct {
+		domain    string
+		mirrors   []string
+		mirrorReg registrytypes.RegMirror
+	}
+	testMirrors := []pair{
+		{
+			domain:  "registry.test1.com",
+			mirrors: []string{"https://mirror.test1.com"},
+		},
+		{
+			domain:  "registry.test2.com:5000",
+			mirrors: []string{"https://mirror.test2.com"},
+		},
+		{
+			domain:  "registry.test3.com",
+			mirrors: []string{"http://mirror.test3.com"},
+		},
+	}
+	serviceConfig := daemon.RegistryService.ServiceConfig()
+	for _, tm := range testMirrors {
+		reg, ok := serviceConfig.RegMirrors[tm.domain]
+		if !ok {
+			t.Fatalf("%s shoule be present in service config", tm.domain)
+		}
+		for _, mir := range tm.mirrors {
+			if !reg.ContainerMirror(mir) {
+				t.Fatalf("%s should be one of mirrors for %s, but it does not", mir, tm.domain)
+			}
+		}
+	}
+
+	testMirrors = []pair{
+		{
+			domain:    "registry.test1.com",
+			mirrors:   []string{"https://mirror.test1.com"},
+			mirrorReg: mirrorRegistryA,
+		},
+		{
+			domain:    "registry.test2.com:5000",
+			mirrors:   []string{"https://mirror.test2.com"},
+			mirrorReg: mirrorRegistryB,
+		},
+		{
+			domain:    "registry.test3.com",
+			mirrors:   []string{"http://mirror.test3.com"},
+			mirrorReg: mirrorRegistryC,
+		},
+	}
+
+	for _, tm := range testMirrors {
+		valuesSets := make(map[string]interface{})
+		valuesSets["mirror-registries"] = []registrytypes.RegMirror{tm.mirrorReg}
+		newConfig := &config.Config{
+			CommonConfig: config.CommonConfig{
+				ServiceOptions: registry.ServiceOptions{
+					MirrorRegistries: []registrytypes.RegMirror{tm.mirrorReg},
+				},
+				ValuesSet: valuesSets,
+			},
+		}
+
+		err = daemon.Reload(newConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		serviceConfig := daemon.RegistryService.ServiceConfig()
+		if reg, ok := serviceConfig.RegMirrors[tm.domain]; !ok {
+			t.Fatalf("%s should be present in service config", tm.domain)
+		} else {
+			for _, mir := range tm.mirrors {
+				if !reg.ContainerMirror(mir) {
+					t.Fatalf("%s should be one of mirrors for %s, but it does not", mir, tm.domain)
 				}
 			}
 		}
