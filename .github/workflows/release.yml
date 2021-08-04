@@ -1,0 +1,141 @@
+on:
+  push:
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+
+name: Release
+
+jobs:
+
+  build-amd64:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+
+    - name: Build
+      run:  |
+        RELEASEVER=${{ github.ref }}
+        export DOCKER_VERSION=${RELEASEVER#refs/tags/v}
+        sudo apt-get install tree -y && export VERSION=$DOCKER_VERSION-sealer
+        make DOCKER_CROSSPLATFORMS=linux/amd64 cross
+        cd  bundles &&  tree -L 4
+        URL=https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz
+        wget $URL -O  docker.tgz &&  tar xvf docker.tgz
+        mkdir -p binary-docker && cd binary-docker
+        cp ../docker/* .
+        rm -rf dockerd
+        cd ../
+        rm -rf docker*
+        mkdir -p docker && cd docker
+        cp ../cross/linux/amd64/dockerd .
+        cp ../binary-docker/* .
+        chmod a+x *
+        cd ../ && tar zcvf docker-amd64.tar.gz docker
+        sha256sum docker-amd64.tar.gz > docker-amd64.tar.gz.sha256sum
+    - name: Save build binaries
+      uses: actions/upload-artifact@v2
+      with:
+        name: binaries-amd64
+        path: bundles/docker-amd64.tar.gz*
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Build
+        run:  |
+          export GOARCH=arm64
+          RELEASEVER=${{ github.ref }}
+          export DOCKER_VERSION=${RELEASEVER#refs/tags/v}
+          sudo apt-get install tree -y && export VERSION=$DOCKER_VERSION-sealer
+          make DOCKER_CROSSPLATFORMS=linux/arm64 cross
+          cd  bundles &&  tree -L 4
+          URL=https://download.docker.com/linux/static/stable/aarch64/docker-$DOCKER_VERSION.tgz
+          wget $URL -O  docker.tgz &&  tar xvf docker.tgz
+          mkdir -p binary-docker && cd binary-docker
+          cp ../docker/* .
+          rm -rf dockerd
+          cd ../
+          rm -rf docker*
+          mkdir -p docker && cd docker
+          cp ../cross/linux/arm64/dockerd .
+          cp ../binary-docker/* .
+          chmod a+x *
+          cd ../ && tar zcvf docker-arm64.tar.gz docker
+          sha256sum docker-arm64.tar.gz > docker-arm64.tar.gz.sha256sum
+      - name: Save build arm64 binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: binaries-arm64
+          path: bundles/docker-arm64.tar.gz*
+  release:
+    name: create docker Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [ build-amd64, build-arm64 ]
+    steps:
+      - name: Download builds and release notes
+        uses: actions/download-artifact@v2
+        with:
+          path: builds
+      - name: Catalog build assets for upload
+        id: catalog
+        run: |
+          ls -l builds/binaries-arm64
+          ls -l builds/binaries-amd64
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1.1.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: docker ${{ github.ref }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      - name: Upload Linux docker linux amd64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/binaries-amd64/docker-amd64.tar.gz
+          asset_name: docker.tar.gz
+          asset_content_type: application/gzip
+      - name: Upload Linux docker linux amd64 sha256 sum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/binaries-amd64/docker-amd64.tar.gz.sha256sum
+          asset_name: docker.tar.gz.sha256sum
+          asset_content_type: text/plain
+      - name: Upload Linux docker linux arm64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/binaries-arm64/docker-arm64.tar.gz
+          asset_name: docker-arm64.tar.gz
+          asset_content_type: application/gzip
+      - name: Upload Linux docker linux arm64 sha256 sum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/binaries-arm64/docker-arm64.tar.gz.sha256sum
+          asset_name: docker-arm64.tar.gz.sha256sum
+          asset_content_type: text/plain

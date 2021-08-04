@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+    paths-ignore:
+      - 'docs/**'
+      - 'vendor/**'
+      - '*.md'
+      - '*.yml'
+
+jobs:
+
+  build-amd64:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+
+    - name: Build
+      run:  |
+        export DOCKER_VERSION=19.03.14
+        sudo apt-get install tree -y && export VERSION=dev-sealer
+        make DOCKER_CROSSPLATFORMS=linux/amd64 cross
+        cd  bundles &&  tree -L 4
+        URL=https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz
+        wget $URL -O  docker.tgz &&  tar xvf docker.tgz
+        mkdir -p binary-docker && cd binary-docker
+        cp ../docker/* .
+        rm -rf dockerd
+        cd ../
+        rm -rf docker*
+        mkdir -p docker && cd docker
+        cp ../cross/linux/amd64/dockerd .
+        cp ../binary-docker/* .
+        chmod a+x *
+        cd ../ && tar zcvf docker-amd64.tar.gz docker
+
+    - name: Save build binaries
+      uses: actions/upload-artifact@v2
+      with:
+        name: binaries-amd64
+        path: bundles/docker-amd64.tar.gz
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Build
+        run:  |
+          export DOCKER_VERSION=19.03.14
+          sudo apt-get install tree -y && export VERSION=dev-sealer
+          make DOCKER_CROSSPLATFORMS=linux/arm64 cross
+          cd  bundles &&  tree -L 4
+          URL=https://download.docker.com/linux/static/stable/aarch64/docker-$DOCKER_VERSION.tgz
+          wget $URL -O  docker.tgz &&  tar xvf docker.tgz
+          mkdir -p binary-docker && cd binary-docker
+          cp ../docker/* .
+          rm -rf dockerd
+          cd ../
+          rm -rf docker*
+          mkdir -p docker && cd docker
+          cp ../cross/linux/arm64/dockerd .
+          cp ../binary-docker/* .
+          chmod a+x *
+          cd ../ && tar zcvf docker-arm64.tar.gz docker
+      - name: Save build arm64 binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: binaries-arm64
+          path: bundles/docker-arm64.tar.gz
+  release:
+    name: check docker Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [ build-amd64, build-arm64 ]
+    steps:
+      - name: Download builds and release notes
+        uses: actions/download-artifact@v2
+        with:
+          path: builds
+      - name: Catalog build assets for upload
+        id: catalog
+        run: |
+          ls -l builds/binaries-arm64
+          ls -l builds/binaries-amd64
