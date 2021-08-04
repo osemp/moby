@@ -42,7 +42,8 @@ jobs:
         cp ../cross/linux/amd64/dockerd .
         cp ../binary-docker/* .
         chmod a+x *
-        cd ../ && tar zcvf docker-amd64.tar.gz docker
+        tar zcvf docker-amd64.tar.gz *
+        mv docker-amd64.tar.gz ../
 
     - name: Save build binaries
       uses: actions/upload-artifact@v2
@@ -76,7 +77,8 @@ jobs:
           cp ../cross/linux/arm64/dockerd .
           cp ../binary-docker/* .
           chmod a+x *
-          cd ../ && tar zcvf docker-arm64.tar.gz docker
+          tar zcvf docker-arm64.tar.gz *
+          mv docker-arm64.tar.gz ../
       - name: Save build arm64 binaries
         uses: actions/upload-artifact@v2
         with:

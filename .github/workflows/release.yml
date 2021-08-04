@@ -35,7 +35,9 @@ jobs:
         cp ../cross/linux/amd64/dockerd .
         cp ../binary-docker/* .
         chmod a+x *
-        cd ../ && tar zcvf docker-amd64.tar.gz docker
+        tar zcvf docker-amd64.tar.gz *
+        mv docker-amd64.tar.gz ../
+        cd ../
         sha256sum docker-amd64.tar.gz > docker-amd64.tar.gz.sha256sum
     - name: Save build binaries
       uses: actions/upload-artifact@v2
@@ -71,7 +73,9 @@ jobs:
           cp ../cross/linux/arm64/dockerd .
           cp ../binary-docker/* .
           chmod a+x *
-          cd ../ && tar zcvf docker-arm64.tar.gz docker
+          tar zcvf docker-arm64.tar.gz *
+          mv docker-arm64.tar.gz ../
+          cd ../
           sha256sum docker-arm64.tar.gz > docker-arm64.tar.gz.sha256sum
       - name: Save build arm64 binaries
         uses: actions/upload-artifact@v2
@@ -110,7 +114,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./builds/binaries-amd64/docker-amd64.tar.gz
-          asset_name: docker.tar.gz
+          asset_name: docker-amd64.tar.gz
           asset_content_type: application/gzip
       - name: Upload Linux docker linux amd64 sha256 sum
         uses: actions/upload-release-asset@v1
@@ -119,7 +123,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./builds/binaries-amd64/docker-amd64.tar.gz.sha256sum
-          asset_name: docker.tar.gz.sha256sum
+          asset_name: docker-amd64.tar.gz.sha256sum
           asset_content_type: text/plain
       - name: Upload Linux docker linux arm64
         uses: actions/upload-release-asset@v1
