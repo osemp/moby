@@ -20,6 +20,7 @@ import (
 // - Cluster discovery (reconfigure and restart)
 // - Daemon labels
 // - Insecure registries
+// - Mirror Registries
 // - Registry mirrors
 // - Daemon live restore
 func (daemon *Daemon) Reload(conf *config.Config) (err error) {
@@ -60,6 +61,9 @@ func (daemon *Daemon) Reload(conf *config.Config) (err error) {
 		return err
 	}
 	if err := daemon.reloadRegistryMirrors(conf, attributes); err != nil {
+		return err
+	}
+	if err := daemon.reloadMirrorRegistries(conf, attributes); err != nil {
 		return err
 	}
 	if err := daemon.reloadLiveRestore(conf, attributes); err != nil {
@@ -290,6 +294,31 @@ func (daemon *Daemon) reloadRegistryMirrors(conf *config.Config, attributes map[
 		attributes["registry-mirrors"] = string(mirrors)
 	} else {
 		attributes["registry-mirrors"] = "[]"
+	}
+
+	return nil
+}
+
+// reloadMirrorRegistries updates configuration with multiple registry mirror options
+// and updates the passed attributes
+func (daemon *Daemon) reloadMirrorRegistries(conf *config.Config, attributes map[string]string) error {
+	// update corresponding configuration
+	if conf.IsValueSet("mirror-registries") {
+		daemon.configStore.MirrorRegistries = conf.MirrorRegistries
+		if err := daemon.RegistryService.LoadMirrorRegistries(conf.MirrorRegistries); err != nil {
+			return err
+		}
+	}
+
+	// prepare reload event attributes with updatable configurations
+	if daemon.configStore.MirrorRegistries != nil {
+		mirrors, err := json.Marshal(daemon.configStore.MirrorRegistries)
+		if err != nil {
+			return err
+		}
+		attributes["mirror-registries"] = string(mirrors)
+	} else {
+		attributes["mirror-registries"] = "[]"
 	}
 
 	return nil

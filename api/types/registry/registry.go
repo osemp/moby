@@ -2,10 +2,95 @@ package registry // import "github.com/docker/docker/api/types/registry"
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
+	"net/url"
+	"strings"
 
 	"github.com/opencontainers/image-spec/specs-go/v1"
 )
+
+type regMirrorJSONHelper struct {
+	Domain  string   `json:"domain,omitempty"` // domain is domainName:port(if port is specified)
+	Mirrors []string `json:"mirrors,omitempty"`
+}
+
+type RegMirror struct {
+	Domain  url.URL   `json:"domain,omitempty"` // domain is domainName:port(if port is specified)
+	Mirrors []url.URL `json:"mirrors,omitempty"`
+}
+
+func (rm *RegMirror) UnmarshalJSON(data []byte) error {
+	var (
+		helper     = regMirrorJSONHelper{}
+		domainURL  url.URL
+		mirrorURLs []url.URL
+	)
+
+	err := json.Unmarshal(data, &helper)
+	if err != nil {
+		return err
+	}
+
+	u, err := parseURL(helper.Domain)
+	if err != nil {
+		return err
+	}
+	domainURL = *u
+
+	for _, m := range helper.Mirrors {
+		u, err = parseURL(m)
+		if err != nil {
+			return err
+		}
+		mirrorURLs = append(mirrorURLs, *u)
+	}
+
+	rm.Domain, rm.Mirrors = domainURL, mirrorURLs
+	return nil
+}
+
+func (rm *RegMirror) MarshalJSON() ([]byte, error) {
+	var (
+		helper     = regMirrorJSONHelper{}
+		domainURL  string
+		mirrorURLs []string
+	)
+
+	domainURL = rm.Domain.String()
+	for _, mirror := range rm.Mirrors {
+		mirrorURLs = append(mirrorURLs, mirror.String())
+	}
+	helper.Domain, helper.Mirrors = domainURL, mirrorURLs
+	return json.Marshal(helper)
+}
+
+func (rm *RegMirror) ContainerMirror(str string) bool {
+	for _, mirror := range rm.Mirrors {
+		if mirror.String() == str {
+			return true
+		}
+	}
+	return false
+}
+
+func NewRegistryMirror(domain string, mirrors []string) (RegMirror, error) {
+	reg := RegMirror{}
+	domainU, err := parseURL(domain)
+	if err != nil {
+		return RegMirror{}, err
+	}
+
+	reg.Domain = *domainU
+	for _, str := range mirrors {
+		mirrorU, err := parseURL(str)
+		if err != nil {
+			return RegMirror{}, err
+		}
+		reg.Mirrors = append(reg.Mirrors, *mirrorU)
+	}
+	return reg, nil
+}
 
 // ServiceConfig stores daemon registry services configuration.
 type ServiceConfig struct {
@@ -14,6 +99,7 @@ type ServiceConfig struct {
 	InsecureRegistryCIDRs                   []*NetIPNet           `json:"InsecureRegistryCIDRs"`
 	IndexConfigs                            map[string]*IndexInfo `json:"IndexConfigs"`
 	Mirrors                                 []string
+	RegMirrors                              map[string]RegMirror
 }
 
 // NetIPNet is the net.IPNet type, which can be marshalled and
@@ -116,4 +202,24 @@ type DistributionInspect struct {
 	// Platforms contains the list of platforms supported by the image,
 	// obtained by parsing the manifest
 	Platforms []v1.Platform
+}
+
+func parseURL(str string) (*url.URL, error) {
+	str = strings.ToLower(str)
+	newURL, err := url.Parse(str)
+	if err != nil {
+		return nil, err
+	}
+	if newURL.Scheme == "" {
+		newURL.Scheme = "https"
+		return parseURL("https://" + str)
+	}
+	if newURL.Host == "" {
+		return nil, fmt.Errorf("failed to parse %s to url, err: host is empty", str)
+	}
+	if newURL.Scheme != "http" && newURL.Scheme != "https" {
+		return nil, fmt.Errorf("failed to parse %s to url, err: unsupported scheme %s", str, newURL.Scheme)
+	}
+
+	return newURL, nil
 }

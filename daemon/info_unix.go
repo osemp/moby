@@ -1,4 +1,4 @@
-// +build !windows
+// +build !windows darwin
 
 package daemon // import "github.com/docker/docker/daemon"
 
